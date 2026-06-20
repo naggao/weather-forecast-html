@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>14日間降雨・風況予報</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: sans-serif; background: #fff; color: #111; padding: 16px; }
+.app { max-width: 900px; margin: 0 auto; padding: 1rem 0; }
+h1 { font-size: 18px; font-weight: 500; margin-bottom: 1.5rem; color: #333; }
+.tabs { display: flex; gap: 8px; margin-bottom: 1.5rem; flex-wrap: wrap; }
+.tab { padding: 7px 18px; font-size: 15px; border: 1px solid #ccc; border-radius: 8px; cursor: pointer; background: transparent; color: #666; }
+.tab.active { background: #f0f0f0; color: #111; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; border-color: #999; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 1rem; font-size: 14px; color: #555; }
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.legend-box { width: 13px; height: 13px; border-radius: 2px; flex-shrink: 0; }
+.summary-cards { display: flex; gap: 10px; margin-bottom: 1.25rem; }
+.sc { flex: 1; background: #f5f5f5; border-radius: 8px; padding: 10px 12px; }
+.sc-label { font-size: 13px; color: #666; margin-bottom: 4px; }
+.sc-value { font-size: 24px; font-weight: 500; color: #111; }
+.sc-unit { font-size: 13px; color: #666; }
+.chart-wrap { position: relative; width: 100%; height: 300px; }
+.arrow-row { display: flex; margin-top: 8px; }
+.arrow-cell { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.arrow-cell svg { width: 20px; height: 20px; }
+.time-row { display: flex; margin-top: 4px; height: 48px; align-items: flex-start; }
+.time-cell { flex: 1; display: flex; justify-content: center; font-size: 13px; color: #777; font-weight: 500; }
+.time-cell span { display: inline-block; transform: rotate(-60deg); transform-origin: top center; white-space: nowrap; margin-top: 4px; }
+.status-msg { font-size: 14px; padding: 1rem 0; color: #666; }
+.error-msg { color: #c00; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>14日間 降雨・風況予報</h1>
+  <div class="tabs">
+    <button class="tab active" onclick="switchLocation(0)">愛知県東海市</button>
+    <button class="tab" onclick="switchLocation(1)">岐阜県中津川市</button>
+    <button class="tab" onclick="switchLocation(2)">熊本県天草市</button>
+  </div>
+  <div class="legend">
+    <span class="legend-item"><span class="legend-box" style="background:#4DA6FF"></span>穏やか 0–3 m/s</span>
+    <span class="legend-item"><span class="legend-box" style="background:#4DC97A"></span>弱風 3–5 m/s</span>
+    <span class="legend-item"><span class="legend-box" style="background:#FFD94D"></span>やや強 5–10 m/s</span>
+    <span class="legend-item"><span class="legend-box" style="background:#FF8C4D"></span>強風 10–18 m/s</span>
+    <span class="legend-item"><span class="legend-box" style="background:#FF4D4D"></span>暴風 18+ m/s</span>
+  </div>
+  <div class="summary-cards">
+    <div class="sc"><div class="sc-label">14日間合計降雨量</div><div><span class="sc-value" id="total-rain">--</span> <span class="sc-unit">mm</span></div></div>
+    <div class="sc"><div class="sc-label">最大日降雨量</div><div><span class="sc-value" id="max-rain">--</span> <span class="sc-unit">mm</span></div></div>
+    <div class="sc"><div class="sc-label">平均風速</div><div><span class="sc-value" id="avg-wind">--</span> <span class="sc-unit">m/s</span></div></div>
+  </div>
+  <div id="status" class="status-msg">データを取得中...</div>
+  <div class="chart-wrap"><canvas id="rainChart"></canvas></div>
+  <div class="arrow-row" id="arrowRow"></div>
+  <div class="time-row" id="timeRow"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const LOCATIONS = [
+  { name: '愛知県東海市', lat: 35.0186, lon: 136.9027 },
+  { name: '岐阜県中津川市', lat: 35.4872, lon: 137.5000 },
+  { name: '熊本県天草市', lat: 32.4222, lon: 130.3478 }
+];
+const WEEKDAYS = ['日','月','火','水','木','金','土'];
+let currentIdx = 0;
+let chartInstance = null;
+const allData = [null, null, null];
+
+function windColor(ms) {
+  if (ms < 3) return '#4DA6FF';
+  if (ms < 5) return '#4DC97A';
+  if (ms < 10) return '#FFD94D';
+  if (ms < 18) return '#FF8C4D';
+  return '#FF4D4D';
+}
+
+function formatXLabel(str) {
+  const d = new Date(str);
+  return `${WEEKDAYS[d.getDay()]}(${d.getMonth()+1}/${d.getDate()})`;
+}
+
+async function fetchData(idx) {
+  const loc = LOCATIONS[idx];
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}`
+    + `&daily=precipitation_sum,windspeed_10m_max,winddirection_10m_dominant`
+    + `&hourly=windspeed_10m`
+    + `&timezone=Asia%2FTokyo&forecast_days=14`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('API error');
+  return await res.json();
+}
+
+function calcMaxWindTimes(data) {
+  const times = data.hourly.time;
+  const speeds = data.hourly.windspeed_10m;
+  const days = data.daily.time;
+  return days.map(day => {
+    let maxSpeed = -1, maxHour = 0;
+    for (let h = 0; h < 24; h++) {
+      const idx = times.findIndex(t => t === `${day}T${String(h).padStart(2,'0')}:00`);
+      if (idx !== -1 && speeds[idx] > maxSpeed) {
+        maxSpeed = speeds[idx];
+        maxHour = h;
+      }
+    }
+    return `${maxHour}`;
+  });
+}
+
+function renderChart(data) {
+  const daily = data.daily;
+  const rain = daily.precipitation_sum.map(v => v ?? 0);
+  const wind = daily.windspeed_10m_max.map(v => (v ?? 0) / 3.6);
+  const wdir = daily.winddirection_10m_dominant;
+  const maxWindTimes = calcMaxWindTimes(data);
+
+  document.getElementById('total-rain').textContent = rain.reduce((a,b)=>a+b,0).toFixed(1);
+  document.getElementById('max-rain').textContent = Math.max(...rain).toFixed(1);
+  document.getElementById('avg-wind').textContent = (wind.reduce((a,b)=>a+b,0)/wind.length).toFixed(1);
+
+  if (chartInstance) chartInstance.destroy();
+  const ctx = document.getElementById('rainChart').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: daily.time.map(formatXLabel),
+      datasets: [{ data: rain, backgroundColor: wind.map(windColor), borderRadius: 3, borderSkipped: false }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { onComplete: () => {
+        const left = chartInstance.chartArea ? chartInstance.chartArea.left : 0;
+        document.getElementById('arrowRow').style.paddingLeft = left + 'px';
+        document.getElementById('timeRow').style.paddingLeft = left + 'px';
+      }},
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          titleFont: { size: 13 },
+          bodyFont: { size: 13 },
+          callbacks: {
+            label: (c) => {
+              const i = c.dataIndex;
+              return [`降雨量: ${rain[i].toFixed(1)} mm`, `風速: ${wind[i].toFixed(1)} m/s`, `最大風速時刻: ${maxWindTimes[i]}時`];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { font: { size: 13 }, autoSkip: false, maxRotation: 60 }, grid: { display: false } },
+        y: { title: { display: true, text: '降雨量 (mm)', font: { size: 13 } }, beginAtZero: true, ticks: { font: { size: 13 } } }
+      }
+    }
+  });
+
+  const arrowRow = document.getElementById('arrowRow');
+  const timeRow = document.getElementById('timeRow');
+  arrowRow.innerHTML = '';
+  timeRow.innerHTML = '';
+  const leftOffset = chartInstance.chartArea ? chartInstance.chartArea.left : 0;
+  arrowRow.style.paddingLeft = leftOffset + 'px';
+  timeRow.style.paddingLeft = leftOffset + 'px';
+
+  wdir.forEach((deg, i) => {
+    const angle = ((deg ?? 0) + 180) % 360;
+    const cell = document.createElement('div');
+    cell.className = 'arrow-cell';
+    cell.innerHTML = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <g transform="rotate(${angle},8,8)">
+        <line x1="8" y1="13" x2="8" y2="3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <polyline points="5,6 8,3 11,6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      </g>
+    </svg>`;
+    arrowRow.appendChild(cell);
+
+    const tc = document.createElement('div');
+    tc.className = 'time-cell';
+    tc.innerHTML = `<span>${maxWindTimes[i]}</span>`;
+    timeRow.appendChild(tc);
+  });
+}
+
+async function switchLocation(idx) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===idx));
+  currentIdx = idx;
+  if (allData[idx]) { renderChart(allData[idx]); return; }
+  const status = document.getElementById('status');
+  status.textContent = 'データを取得中...';
+  status.className = 'status-msg';
+  status.style.display = 'block';
+  try {
+    const data = await fetchData(idx);
+    allData[idx] = data;
+    status.style.display = 'none';
+    renderChart(data);
+  } catch(e) {
+    status.className = 'status-msg error-msg';
+    status.textContent = 'データの取得に失敗しました。ネットワーク接続を確認してください。';
+  }
+}
+
+switchLocation(0);
+</script>
+</body>
+</html>
