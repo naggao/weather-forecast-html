@@ -9,9 +9,25 @@
 body { font-family: sans-serif; background: #fff; color: #111; padding: 16px; }
 .app { max-width: 900px; margin: 0 auto; padding: 1rem 0; }
 h1 { font-size: 18px; font-weight: 500; margin-bottom: 1.5rem; color: #333; }
+h3 { font-size: 16px; font-weight: 500; margin-bottom: 10px; color: #222; }
 .tabs { display: flex; gap: 8px; margin-bottom: 1.5rem; flex-wrap: wrap; }
 .tab { padding: 7px 18px; font-size: 15px; border: 1px solid #ccc; border-radius: 8px; cursor: pointer; background: transparent; color: #666; }
 .tab.active { background: #f0f0f0; color: #111; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; border-color: #999; }
+
+.today-section { margin-bottom: 1.5rem; }
+.day-cards { display: flex; gap: 12px; margin-bottom: 1rem; }
+.day-card { flex: 1; background: #f5f5f5; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+.day-card svg { width: 32px; height: 32px; flex-shrink: 0; color: #2563a8; }
+.day-card .dc-label { font-size: 13px; color: #666; margin-bottom: 2px; }
+.day-card .dc-desc { font-size: 14px; font-weight: 500; color: #111; }
+.day-card .dc-temp { font-size: 13px; color: #666; margin-top: 2px; }
+.chart48-wrap { position: relative; width: 100%; height: 220px; }
+.arrow-row-48 { display: flex; margin-top: 4px; }
+.arrow-cell-48 { flex: 1; display: flex; justify-content: center; }
+.arrow-cell-48 svg { width: 14px; height: 14px; }
+
+.divider { border-top: 1px solid #e3e3e3; margin: 1.5rem 0; }
+
 .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 1rem; font-size: 14px; color: #555; }
 .legend-item { display: flex; align-items: center; gap: 5px; }
 .legend-box { width: 13px; height: 13px; border-radius: 2px; flex-shrink: 0; }
@@ -39,6 +55,16 @@ h1 { font-size: 18px; font-weight: 500; margin-bottom: 1.5rem; color: #333; }
     <button class="tab" onclick="switchLocation(1)">岐阜県中津川市</button>
     <button class="tab" onclick="switchLocation(2)">熊本県天草市</button>
   </div>
+
+  <div class="today-section">
+    <h3>直近の天候</h3>
+    <div class="day-cards" id="dayCards"></div>
+    <div class="chart48-wrap"><canvas id="chart48"></canvas></div>
+    <div class="arrow-row-48" id="arrowRow48"></div>
+  </div>
+
+  <div class="divider"></div>
+
   <div class="legend">
     <span class="legend-item"><span class="legend-box" style="background:#4DA6FF"></span>穏やか 0–3 m/s</span>
     <span class="legend-item"><span class="legend-box" style="background:#4DC97A"></span>弱風 3–5 m/s</span>
@@ -67,6 +93,7 @@ const LOCATIONS = [
 const WEEKDAYS = ['日','月','火','水','木','金','土'];
 let currentIdx = 0;
 let chartInstance = null;
+let chart48Instance = null;
 const allData = [null, null, null];
 
 function windColor(ms) {
@@ -77,16 +104,57 @@ function windColor(ms) {
   return '#FF4D4D';
 }
 
+const WEATHER_SVGS = {
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v1.5M12 19.5V21M4.6 4.6l1 1M18.4 18.4l1 1M3 12h1.5M19.5 12H21M4.6 19.4l1-1M18.4 5.6l1-1"/>',
+  cloudSun: '<circle cx="7" cy="6" r="2.2"/><path d="M7 2.3v1M3.6 3.6l.7.7M10.4 3.6l-.7.7"/><path d="M6 17h10.5a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.6-1.7A4 4 0 0 0 6 17z"/>',
+  cloud: '<path d="M6 18h11.5a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.6-1.7A4 4 0 0 0 6 18z"/>',
+  mist: '<path d="M4 8h16M4 12h16M4 16h10"/>',
+  drizzle: '<path d="M6 14h11.5a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.6-1.7A4 4 0 0 0 6 14z"/><path d="M8 18l-1 2.5M12.5 18l-1 2.5M17 18l-1 2.5"/>',
+  rain: '<path d="M6 13h11.5a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.6-1.7A4 4 0 0 0 6 13z"/><path d="M8 17l-1.5 3.5M12.5 17L11 20.5M17 17l-1.5 3.5"/>',
+  snow: '<path d="M6 13h11.5a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.6-1.7A4 4 0 0 0 6 13z"/><path d="M9 17v4M9 17.5l-1.7 1.2M9 17.5l1.7 1.2M9 19.5l-1.7 1.2M9 19.5l1.7 1.2M15 17v4M15 17.5l-1.7 1.2M15 17.5l1.7 1.2M15 19.5l-1.7 1.2M15 19.5l1.7 1.2"/>',
+  storm: '<path d="M6 12h11.5a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.6-1.7A4 4 0 0 0 6 12z"/><path d="M13 12l-2.5 4.5h3L11 21"/>'
+};
+
+function weatherSvgKey(code) {
+  if (code === 0) return 'sun';
+  if ([1,2].includes(code)) return 'cloudSun';
+  if (code === 3) return 'cloud';
+  if ([45,48].includes(code)) return 'mist';
+  if ([51,53,55,56,57].includes(code)) return 'drizzle';
+  if ([61,63,65,80,81,82].includes(code)) return 'rain';
+  if ([71,73,75,77,85,86].includes(code)) return 'snow';
+  if ([95,96,99].includes(code)) return 'storm';
+  return 'cloud';
+}
+
+function weatherDesc(code) {
+  if (code === 0) return '晴れ';
+  if ([1,2].includes(code)) return '晴れ時々曇り';
+  if (code === 3) return '曇り';
+  if ([45,48].includes(code)) return '霧';
+  if ([51,53,55,56,57].includes(code)) return '霧雨';
+  if ([61,63,65].includes(code)) return '雨';
+  if ([80,81,82].includes(code)) return 'にわか雨';
+  if ([71,73,75,77,85,86].includes(code)) return '雪';
+  if ([95,96,99].includes(code)) return '雷雨';
+  return '不明';
+}
+
 function formatXLabel(str) {
   const d = new Date(str);
   return `${WEEKDAYS[d.getDay()]}(${d.getMonth()+1}/${d.getDate()})`;
 }
 
+function formatDayCardLabel(str) {
+  const d = new Date(str);
+  return `${d.getMonth()+1}/${d.getDate()}（${WEEKDAYS[d.getDay()]}）`;
+}
+
 async function fetchData(idx) {
   const loc = LOCATIONS[idx];
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}`
-    + `&daily=precipitation_sum,windspeed_10m_max,winddirection_10m_dominant`
-    + `&hourly=windspeed_10m`
+    + `&daily=precipitation_sum,windspeed_10m_max,winddirection_10m_dominant,weathercode,temperature_2m_max,temperature_2m_min`
+    + `&hourly=windspeed_10m,precipitation,winddirection_10m`
     + `&timezone=Asia%2FTokyo&forecast_days=14`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('API error');
@@ -101,12 +169,88 @@ function calcMaxWindTimes(data) {
     let maxSpeed = -1, maxHour = 0;
     for (let h = 0; h < 24; h++) {
       const idx = times.findIndex(t => t === `${day}T${String(h).padStart(2,'0')}:00`);
-      if (idx !== -1 && speeds[idx] > maxSpeed) {
-        maxSpeed = speeds[idx];
-        maxHour = h;
-      }
+      if (idx !== -1 && speeds[idx] > maxSpeed) { maxSpeed = speeds[idx]; maxHour = h; }
     }
     return `${maxHour}`;
+  });
+}
+
+function renderDayCards(data) {
+  const daily = data.daily;
+  const cards = document.getElementById('dayCards');
+  cards.innerHTML = '';
+  const labels = ['今日', '明日'];
+  for (let i = 0; i < 2; i++) {
+    const code = daily.weathercode[i];
+    const card = document.createElement('div');
+    card.className = 'day-card';
+    card.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">${WEATHER_SVGS[weatherSvgKey(code)]}</svg>
+      <div>
+        <div class="dc-label">${labels[i]}　${formatDayCardLabel(daily.time[i])}</div>
+        <div class="dc-desc">${weatherDesc(code)}</div>
+        <div class="dc-temp">${Math.round(daily.temperature_2m_max[i])}° / ${Math.round(daily.temperature_2m_min[i])}°</div>
+      </div>`;
+    cards.appendChild(card);
+  }
+}
+
+function render48hChart(data) {
+  const hourly = data.hourly;
+  const rain48 = hourly.precipitation.slice(0, 48).map(v => v ?? 0);
+  const wind48 = hourly.windspeed_10m.slice(0, 48).map(v => (v ?? 0) / 3.6);
+  const wdir48 = hourly.winddirection_10m.slice(0, 48);
+  const labels48 = hourly.time.slice(0, 48).map(t => `${new Date(t).getHours()}`);
+
+  if (chart48Instance) chart48Instance.destroy();
+  const ctx = document.getElementById('chart48').getContext('2d');
+  chart48Instance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels48,
+      datasets: [{ data: rain48, backgroundColor: wind48.map(windColor), borderRadius: 2, borderSkipped: false, barPercentage: 0.6, categoryPercentage: 0.9 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { onComplete: () => {
+        const left = chart48Instance.chartArea ? chart48Instance.chartArea.left : 0;
+        document.getElementById('arrowRow48').style.paddingLeft = left + 'px';
+      }},
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (c) => {
+              const i = c.dataIndex;
+              return [`降雨量: ${rain48[i].toFixed(1)} mm`, `風速: ${wind48[i].toFixed(1)} m/s`];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { font: { size: 13 }, callback: (val, idx) => idx % 2 === 0 ? labels48[idx] : '' }, grid: { display: false } },
+        y: { title: { display: true, text: 'mm/h', font: { size: 13 } }, beginAtZero: true, ticks: { font: { size: 13 } } }
+      }
+    }
+  });
+
+  const arrowRow48 = document.getElementById('arrowRow48');
+  arrowRow48.innerHTML = '';
+  const leftOffset48 = chart48Instance.chartArea ? chart48Instance.chartArea.left : 0;
+  arrowRow48.style.paddingLeft = leftOffset48 + 'px';
+
+  wdir48.forEach((deg) => {
+    const angle = ((deg ?? 0) + 180) % 360;
+    const cell = document.createElement('div');
+    cell.className = 'arrow-cell-48';
+    cell.innerHTML = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <g transform="rotate(${angle},8,8)">
+        <line x1="8" y1="13" x2="8" y2="3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <polyline points="5,6 8,3 11,6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      </g>
+    </svg>`;
+    arrowRow48.appendChild(cell);
   });
 }
 
@@ -187,7 +331,12 @@ function renderChart(data) {
 async function switchLocation(idx) {
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===idx));
   currentIdx = idx;
-  if (allData[idx]) { renderChart(allData[idx]); return; }
+  if (allData[idx]) {
+    renderDayCards(allData[idx]);
+    render48hChart(allData[idx]);
+    renderChart(allData[idx]);
+    return;
+  }
   const status = document.getElementById('status');
   status.textContent = 'データを取得中...';
   status.className = 'status-msg';
@@ -196,6 +345,8 @@ async function switchLocation(idx) {
     const data = await fetchData(idx);
     allData[idx] = data;
     status.style.display = 'none';
+    renderDayCards(data);
+    render48hChart(data);
     renderChart(data);
   } catch(e) {
     status.className = 'status-msg error-msg';
