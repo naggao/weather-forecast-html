@@ -153,6 +153,7 @@ function formatDayCardLabel(str) {
 async function fetchData(idx) {
   const loc = LOCATIONS[idx];
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}`
+    + `&current_weather=true`
     + `&daily=precipitation_sum,windspeed_10m_max,winddirection_10m_dominant,weathercode,temperature_2m_max,temperature_2m_min`
     + `&hourly=windspeed_10m,precipitation,winddirection_10m`
     + `&timezone=Asia%2FTokyo&forecast_days=14`;
@@ -177,19 +178,24 @@ function calcMaxWindTimes(data) {
 
 function renderDayCards(data) {
   const daily = data.daily;
+  const current = data.current_weather;
   const cards = document.getElementById('dayCards');
   cards.innerHTML = '';
   const labels = ['今日', '明日'];
   for (let i = 0; i < 2; i++) {
-    const code = daily.weathercode[i];
+    const isToday = i === 0 && current;
+    const code = isToday ? current.weathercode : daily.weathercode[i];
     const card = document.createElement('div');
     card.className = 'day-card';
+    const tempLine = isToday
+      ? `現在 ${Math.round(current.temperature)}°（最高${Math.round(daily.temperature_2m_max[i])}° / 最低${Math.round(daily.temperature_2m_min[i])}°）`
+      : `${Math.round(daily.temperature_2m_max[i])}° / ${Math.round(daily.temperature_2m_min[i])}°`;
     card.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">${WEATHER_SVGS[weatherSvgKey(code)]}</svg>
       <div>
         <div class="dc-label">${labels[i]}　${formatDayCardLabel(daily.time[i])}</div>
         <div class="dc-desc">${weatherDesc(code)}</div>
-        <div class="dc-temp">${Math.round(daily.temperature_2m_max[i])}° / ${Math.round(daily.temperature_2m_min[i])}°</div>
+        <div class="dc-temp">${tempLine}</div>
       </div>`;
     cards.appendChild(card);
   }
